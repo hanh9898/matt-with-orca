@@ -47,6 +47,9 @@ Copy in only what a worker cannot look up: an unwritten convention, the reason b
 ## Asking when stuck
 - A blocking question goes through the `ask` command in your preamble; wait for the answer. The coordinator
   answers through Orca; a local question prompt is seen by no one.
+- The coordinator may steer you mid-task (a decision, a correction, a trap another worker hit). Read
+  follow-ups with `check --terminal <your handle>` from your preamble at each checkpoint (before a new
+  file, after a test run) and once more right before `worker_done`, and apply what they say.
 
 ## Done means
 - Commit to your branch. The coordinator pushes and merges.
