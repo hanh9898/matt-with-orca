@@ -46,7 +46,7 @@ Each wave then goes through the same loop:
 1. **Prepare**: check the Orca toolchain (the install part is stamped per Orca version, the session part is checked every run), then read the ticket tracker and the integration branch.
 2. **Split**: draw the dependency graph and propose the next wave. You approve it.
 3. **Common rules**: pin a base commit and write `wave<N>-common-rules.md` from the template.
-4. **Spawn**: one Orca Run per wave; per ticket, create the worktree with its agent, wait until the agent is warm, then hand it the spec with `worker-start --terminal`. Symptom tickets run `diagnosing-bugs` then `tdd`; behaviour tickets run `tdd`. Every flow ends with `code-review`, as Matt's `/implement` does.
+4. **Spawn**: one Orca Run per wave; per ticket, `scripts/spawn-worker.sh` creates the worktree with its agent, waits until the agent is warm, then hands it the spec with `worker-start --terminal`. One background job per ticket, the whole wave at once. Symptom tickets run `diagnosing-bugs` then `tdd`; behaviour tickets run `tdd`. Every flow ends with `code-review`, as Matt's `/implement` does.
 5. **Check**: wait on `worker_done`, then verify each report against commits, ticket status, the review result, and a re-run of its key claim.
 6. **Merge**: one `--no-ff` merge per ticket, in ticket order, with a cheap verification after each.
 7. **Review the seams**: for waves of two or more tickets, one `code-review` pass over where the tickets touch; findings go to a worker in the owning worktree or get fixed on the integration branch.
@@ -61,6 +61,7 @@ The skill asks for your approval at the decisions that are yours: the stage and 
 - **The coordinating Claude Code session must run inside an Orca-managed terminal**: a Run binds to the coordinator's terminal, so `orca worktree current --json` has to resolve to your repo
 - [Matt Pocock's skills](https://github.com/mattpocock/skills), installed as the `mattpocock-skills` Claude Code plugin. The skill suggests commands in the plugin's namespaced form, `/mattpocock-skills:<skill>`; if you installed Matt's skills another way, type the same skill without the prefix (`/<skill>`).
 - A git repository whose tracker is configured by `/mattpocock-skills:setup-matt-pocock-skills`
+- `bash` with `grep` and `sed` for `scripts/spawn-worker.sh` (on Windows, the Git Bash that Claude Code uses)
 
 [`SETUP.md`](skills/matt-with-orca/SETUP.md) walks through each of these when a check fails.
 
@@ -135,6 +136,7 @@ Files in this repo:
 | [`skills/matt-with-orca/COMMON-RULES-TEMPLATE.md`](skills/matt-with-orca/COMMON-RULES-TEMPLATE.md) | The frame for each wave's common rules |
 | [`skills/matt-with-orca/TROUBLESHOOTING.md`](skills/matt-with-orca/TROUBLESHOOTING.md) | Symptoms and fixes for failed starts, stopped workers, merge problems, and cleanup |
 | [`skills/matt-with-orca/SETUP.md`](skills/matt-with-orca/SETUP.md) | Installing the Orca CLI, runtime, skills, and Matt's plugin when a step 1 check fails |
+| [`skills/matt-with-orca/scripts/spawn-worker.sh`](skills/matt-with-orca/scripts/spawn-worker.sh) | Spawns one worker warm (worktree or terminal, wait for the agent's input box, `worker-start --terminal`) and prints one `RESULT` line |
 | [`.claude-plugin/`](.claude-plugin/) | Marketplace and plugin manifests for the Claude Code plugin install |
 
 ## Design principles
@@ -145,6 +147,7 @@ Files in this repo:
 - **Review per ticket, then the seams.** Each worker ends with Matt's `code-review` before its last commit, as `/implement` does; the coordinator reviews only where tickets collide once merged, and skips that pass for one-ticket waves.
 - **Only positive evidence acts.** A worker is stopped, abandoned or retried only on proof it exited; silence and `unverifiable` mean keep waiting.
 - **Nothing destructive without three checks.** A worktree is removed only when its dispatch has settled, its tree is clean, and its branch is merged.
+- **Waiting commands run in the background.** Spawns and `check --wait` run as background jobs, so one slow worker never freezes the coordinator's handling of the others.
 - **State lives on disk.** Ticket status and the wave file are enough for a fresh session to resume.
 
 ## Limitations

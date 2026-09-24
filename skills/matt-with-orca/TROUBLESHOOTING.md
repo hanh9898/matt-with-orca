@@ -13,17 +13,27 @@ Only positive evidence authorizes stopping, abandoning or retrying a worker: liv
 1. `worker-list --run <run id> --json`: that row's `projection.liveness.verdict` must be `live`. Anything else: follow `projection.nextAction`.
 2. `orca terminal read --terminal <handle> --screen`: if the `draft` field holds the preamble and `=== TASK ===`, submit exactly that draft with a single Enter and no text: `orca terminal send --terminal <handle> --enter --json`.
 3. Read the screen again after about 20 seconds: an empty `draft` and an agent running a turn (a tool-call line, or `Actioning…`) means the worker took the task; treat it as `ready` from here. That Enter makes Orca mark the terminal `user_takeover`: `worker-release` in step 5 then returns `state: retained`, `processAction: none`, and leaves the terminal alive. Write "terminal user_takeover <handle>" in the private resources column, so step 8 closes that terminal.
-4. An empty `draft` with the agent sitting at an empty input box and no turn: the input is lost. `worker-stop --dispatch <dispatch id>`, then `worker-start --task <task id> --retry-of <dispatch id> --worktree id:<worktree id> --agent <agent>` with the same spec, and write the new dispatch id into the log.
+4. An empty `draft` with the agent sitting at an empty input box and no turn: the input is lost. `worker-stop --dispatch <dispatch id>`, then retry it warm (see "Running a Task again" below).
 
-**Worker stops midway** (session limit, API error, context exhausted), with positive evidence. Check its branch and directory for what is really done. If the remainder is small, do it yourself. If it is large, wait for the limit to reset, then run again in the **same worktree**: `worker-start --task <task id> --retry-of <dispatch id> --worktree id:<worktree id> --agent <agent>`. The new spec states which part is done and who did it, narrows the task to exactly the unfinished part, and restates the common rules. Write the new dispatch id into the log. After three consecutive failures of one Task, Orca marks that Task `failed`: stop and tell the user.
+**Running a Task again.** Two shapes, both in the **same worktree** and both through `bash <skill dir>/scripts/spawn-worker.sh --worktree <worktree id> --launch "<agent launch command>"` in the background:
 
-**`worker_done` with `--outcome failed`.** Read the summary and the ticket's comments. If the cause is within the worker's reach (missing information, a misread ticket), add to the common rules or the ticket and run again as above. If the cause needs a human decision, record it in the ticket and set `ready-for-human`.
+- Same spec: add `--task <task id> --retry-of <dispatch id>`. The retry reuses the spec stored on the Task; `--task` and `--spec` are mutually exclusive, so a retry cannot carry new instructions.
+- New instructions (a narrowed task, a correction): add `--title <title> --spec-file <spec file>`. This creates a new Task; write both the old and the new dispatch id into the log row.
+
+After three consecutive failures of one Task, Orca marks that Task `failed`: stop and tell the user.
+
+**Worker stops midway** (session limit, API error, context exhausted), with positive evidence. Check its branch and directory for what is really done. If the remainder is small, do it yourself. If it is large, wait for the limit to reset, then run it again with new instructions: the spec states which part is done and who did it, narrows the task to exactly the unfinished part, and restates the path to the common rules.
+
+**Orca restarted mid-wave** (`_meta.runtimeId` in any receipt differs from the one before). Liveness turns `unverifiable` with `stale_status` or `missing_status`: that is absence, not death. Keep going by dispatch id; handles that still resolve stay valid, and `worker-show` names the current one. Positive evidence of death is the worker's screen showing a bare shell prompt with no agent UI, no `worker_done`, and no new commit on the branch: then `worker-stop` and run the Task again.
+
+**`worker-start` or `check` answers `consumer_fenced`.** This coordinator terminal is bound to a different Run than the one the command targets; a terminal holds one Run at a time. Bind back with `run-use --id <run id>` only when no other wave's loop still needs this terminal.
+
+**`worker_done` with `--outcome failed`.** Read the summary and the ticket's comments. If the cause is within the worker's reach (missing information, a misread ticket), add to the common rules or the ticket and run the Task again (same spec, since the fix lives in the files it points to). If the cause needs a human decision, record it in the ticket and set `ready-for-human`.
 
 **Report is correct but incomplete.** A claim like "clean" or "passing" only covers what the worker checked. Open the real artifact (screenshot, page, command output) and check the aspects the report does not mention.
 
 **Branch name differs from worktree name.** Orca names the branch from `--name` and may add a prefix or change characters. Get the branch name with `git -C <worktree> branch --show-current`.
 
-**Terminal handle stale** after Orca restarts. Keep going by dispatch id; get the new handle from `worker-show`.
 
 ## Merging
 

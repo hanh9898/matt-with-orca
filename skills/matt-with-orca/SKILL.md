@@ -18,6 +18,8 @@ Three words used throughout:
 
 Orca's words: a ticket is a **Task**, one attempt at a Task is a **Dispatch**. Every action on a worker goes by dispatch id, never by terminal handle or title.
 
+**Waiting commands run in the background.** A coordinator juggles several workers at once, and a foreground wait freezes all of them: no question answered, no report checked, no merge, until it returns. So every command that waits runs in the shell's background mode (Claude Code: `run_in_background: true`): `scripts/spawn-worker.sh` (about a minute each), `check --wait` (minutes), `orca skills install`. Start it, keep coordinating, and read its output file when the harness says it finished. Quick reads (`worker-list`, `worker-show`, `terminal read`, `git`) run in the foreground.
+
 ## 0. Locate the state and suggest the next step
 
 Read the signals below on the real repo. Walk the table from the bottom row up; the first row that matches is the current stage.
@@ -102,19 +104,17 @@ The common rules are the single place holding what every worker in the wave need
 
 Create the wave's Run: `orca orchestration run-create --objective "Wave <N>: tickets <NN>, <NN>" --json`. Write the `## Wave workers` heading, a `Run: <run id>` line, and the table header row (ticket, task id, dispatch id, worktree id, branch, private resources, cleaned) at the end of the common rules file **before** spawning the first worker. Write each worker's row as soon as it is spawned, so any session reopened midway can read which workers exist.
 
-Spawn in two moves, so the agent is **warm** (its input box drawn and taking keys) before the spec reaches it. A single `worker-start --worktree new-top-level --agent` types the spec into an agent that is still booting: the text lands, the Enter is lost, and the receipt reads `outcome_unknown` / `turn_start_unobserved` (5 of 6 cold starts on Orca 1.4.210, none of 7 warm ones). For each ticket in the wave, start the whole wave before waiting:
+Spawn in two moves, so the agent is **warm** (its input box drawn and taking keys) before the spec reaches it. A single `worker-start --worktree new-top-level --agent` types the spec into an agent that is still booting: the text lands, the Enter is lost, and the receipt reads `outcome_unknown` / `turn_start_unobserved` (5 of 6 cold starts on Orca 1.4.210, none of 7 warm ones). [`scripts/spawn-worker.sh`](scripts/spawn-worker.sh) does both moves: `worktree create --agent`, a poll of the screen until the agent's input box is drawn (`terminal wait --for tui-idle` can fire before anything is drawn, so it is not the warm signal), then `worker-start --terminal`, repeated while Orca answers `agent_unconfigured` (no Task is created then). Write each ticket's spec to a file, then start one background job per ticket, the whole wave at once:
 
 ```text
-orca worktree create --repo <repo selector> --name wave<N>-<NN>-<slug> \
-  --base-branch <integration branch> --no-parent --agent <agent> --json
-orca worktree set --worktree id:<worktree id> --display-name "[Wave N] <NN> <ticket name>" --json
-orca orchestration worker-start --spec "<spec>" --task-title "[Wave N] <NN> <ticket name>" \
-  --terminal <handle> --worktree id:<worktree id> --json
+bash <skill dir>/scripts/spawn-worker.sh --new --repo <repo selector> --name wave<N>-<NN>-<slug> \
+  --base <integration branch> --agent <agent> --display-name "[Wave N] <NN> <ticket name>" \
+  --title "[Wave N] <NN> <ticket name>" --spec-file <spec file>
 ```
 
-Between the two moves, wait until the agent is warm: poll `orca terminal read --terminal <handle> --screen` about once a second until the input box's status line is on screen (Claude Code as Orca launches it: the line contains `bypass permissions`). `terminal wait --for tui-idle` can report ready before the agent has drawn anything, so it is not the warm signal. The worktree id and `<handle>` come from `worktree create`'s `worktree.id` and `startupTerminal.handle`. If `worker-start` answers `agent_unconfigured`, the agent was not yet recognized and no Task was created: wait five seconds and run the same `worker-start` again.
+The script's `--warm` text defaults to `bypass permissions`, the status line of Claude Code as Orca launches it; another agent needs its own warm text.
 
-Take the task id and dispatch id from the `worker-start` receipt; the receipt carries both even when the command exits non-zero, so write the log row right away, with the handle in the private resources column. The command exits 0 only when the worker is `ready`. On a non-zero exit, act on the receipt's `state` and `stage` per [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md). Get the branch name with `git -C <path> branch --show-current`, and check that `git -C <path> rev-parse HEAD` equals the base commit; if the integration branch stays still while you spawn, every worktree in the wave shares one base. Orca may place the worktree **nested** inside the integration branch's checkout (`<checkout>/<--name>`); when it does, add `wave*-*/` to that checkout's `.git/info/exclude`, so `git status` and `git add` there see only the integration branch's files.
+Each job ends on a `RESULT` line with the worktree id, handle, task id, dispatch id, `state`, `stage` and error; write the log row from it right away, with the handle in the private resources column. The command exits 0 only when the worker is `ready`. On a non-zero exit, act on the receipt's `state` and `stage` per [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md). Get the branch name with `git -C <path> branch --show-current`, and check that `git -C <path> rev-parse HEAD` equals the base commit; if the integration branch stays still while you spawn, every worktree in the wave shares one base. Orca may place the worktree **nested** inside the integration branch's checkout (`<checkout>/<--name>`); when it does, add `wave*-*/` to that checkout's `.git/info/exclude`, so `git status` and `git add` there see only the integration branch's files.
 
 `<spec>` holds exactly four things: the **absolute** path to the common rules in the integration branch's checkout (the file is the wave's live log and is not in the worktree), the path to the ticket, the private resources (database name, port, volume, temp directory; a distinct set per worker), and the **flow**. Orca injects the lifecycle preamble (task id, dispatch id, the `ask` command, `worker_done`) ahead of the spec; the spec does not repeat it.
 
@@ -144,9 +144,9 @@ The wait loop, run until every dispatch of the wave has settled:
 orca orchestration check --wait --types "worker_done,escalation,question" --timeout-ms 540000 --json
 ```
 
-Keep `--timeout-ms` below the per-command time limit of the shell in use (Claude Code's Bash cuts at 600000 ms and pushes the command to the background), or run the command in the background and read its output file.
+Run it in the background, and keep `--timeout-ms` below the shell's per-command limit (Claude Code's Bash: 600000 ms). A coordinator terminal is bound to one Run at a time, so a second wave's Run, `run-create` or `run-use`, fences the first (`consumer_fenced`): finish one wave's loop before binding another.
 
-Process every message in the batch before passing `--ack <delivery id>` on the next `check`: answer `question` and `escalation` with `orca orchestration reply --id <message id> --body "<answer>"`; ask the user first when the answer is theirs to give. A timeout or an empty result is a checkpoint, not a failure. After three empty waits in a row, run `worker-list --run <run id> --json` and follow each row's `projection.nextAction`.
+Process every message in the batch before passing `--ack <delivery id>` on the next `check`: answer `question` and `escalation` with `orca orchestration reply --id <message id> --body "<answer>"`; ask the user first when the answer is theirs to give. A `heartbeat` only proves liveness: ack it, nothing else. A timeout or an empty result is a checkpoint, not a failure. After three empty waits in a row, run `worker-list --run <run id> --json` and follow each row's `projection.nextAction`.
 
 For each `worker_done`, match the dispatch id against the log, then check the real artifacts, not the report's words:
 
@@ -179,7 +179,7 @@ Each ticket was already reviewed by its worker in step 4. This pass targets only
 - A one-ticket wave has no seam: write `## Review` as "not applicable: one-ticket wave, reviewed by its worker", then go to step 8.
 - A wave of two or more tickets: run `mattpocock-skills:code-review` with the wave's base commit as the fixed point, stating in the call that each ticket was already reviewed on its own and only seam findings should be reported. Present the Standards and Spec axes separately.
 
-Fix each finding. A finding contained in one ticket's zone goes to a new worker in that ticket's own worktree, spawned warm as in step 4 but with the agent started by `orca terminal create --worktree id:<worktree id> --command "<agent launch command>" --json` (the command Orca's launcher ran is the line after the shell prompt at the top of the ticket's first terminal, e.g. `claude --dangerously-skip-permissions`), then wait, check and merge again as in steps 5–6. The previous worker was released in step 5, so the new one starts with a blank context: its spec holds the path to the common rules, the ticket, the ticket's comments (the previous worker's report), the files the previous worker touched, and the finding. A finding cutting across several tickets you fix yourself on the integration branch. Gather every question that needs a human decision into one round, present it, then record the decisions in the comments of the tickets involved, so the next wave can read them.
+Fix each finding. A finding contained in one ticket's zone goes to a new worker in that ticket's own worktree: `bash <skill dir>/scripts/spawn-worker.sh --worktree <worktree id> --launch "<agent launch command>" --title <title> --spec-file <spec file>`, in the background. The launch command is the one Orca's launcher ran, the line after the shell prompt at the top of the ticket's first terminal (e.g. `claude --dangerously-skip-permissions`). An agent started this way is not tracked by Orca's launcher, so the receipt reads `turnStart: unsupported`: confirm with `terminal read --screen` that the agent is running a turn and no `draft` remains. Then wait, check and merge again as in steps 5–6. The previous worker was released in step 5, so the new one starts with a blank context: its spec holds the path to the common rules, the ticket, the ticket's comments (the previous worker's report), the files the previous worker touched, and the finding. A finding cutting across several tickets you fix yourself on the integration branch. Gather every question that needs a human decision into one round, present it, then record the decisions in the comments of the tickets involved, so the next wave can read them.
 
 Append a `## Review` section to the end of the common rules file: the fixed point, the number of findings per axis, and the outcome of each finding.
 
