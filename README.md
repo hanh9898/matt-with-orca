@@ -126,7 +126,7 @@ The skill is user-invoked only (`disable-model-invocation: true`): it starts wor
 Files it writes:
 
 - `wave<N>-common-rules.md`, next to your ticket folder: the rules every worker of wave N reads, followed by the wave's worker table (Run id, task and dispatch ids) and review log.
-- `.installed-version`, in the skill's own directory: the stamp that lets step 1 skip the install checks until Orca changes version. Deleting it forces a full check.
+- `~/.cache/matt-with-orca/installed-version`: the stamp that lets step 1 skip the install checks until Orca changes version. It sits outside the skill's directory so reinstalling the skill keeps it; deleting it forces a full check.
 
 Files in this repo:
 

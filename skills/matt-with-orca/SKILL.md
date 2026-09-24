@@ -65,12 +65,14 @@ Present three things to the user: the current stage, the signals you saw with th
 
 ## 1. Prepare
 
-The Orca toolchain has two parts. The **install** part changes only when Orca is upgraded, so it carries a **stamp**: the file `.installed-version` in this skill's directory, holding the exact `orca --version` line of the last passing check. The **session** part is checked on every run.
+The Orca toolchain has two parts. The **install** part changes only when Orca is upgraded, so it carries a **stamp**: the file `~/.cache/matt-with-orca/installed-version`, holding the exact `orca --version` line of the last passing check. It lives outside the skill's directory because reinstalling the skill (`npx skills add`) replaces that directory and would wipe it. The **session** part is checked on every run.
+
+**The executable** is chosen once per session, in this order: the value of `ORCA_CLI_COMMAND` when it is set (Orca exports it for managed WSL sessions); `orca-dev` in a dev checkout whose session exposes `ORCA_DEV_REPO_ROOT`; `orca-ide` on Linux outside an Orca-managed terminal (bare `orca` there is usually the GNOME screen reader); otherwise `orca`. Every `orca` in this skill means that executable, and `scripts/spawn-worker.sh` reads the same choice from `ORCA_CLI_COMMAND` (or `ORCA_BIN`). If it cannot run, report its exact error and stop; another executable could target a different Orca build. A command that fails with `runtime_access_denied` was blocked by this shell's sandbox: re-run it with the sandbox lifted, and leave Orca itself alone (no `orca open`, no restart).
 
 Install:
 
-- `orca --version` runs. If its output equals the content of `.installed-version`, the install part passes; go to the session part.
-- Different, or no `.installed-version` yet: `orca skills installed` lists `orca-cli`, `orchestration`, and `tdd`, `diagnosing-bugs`, `code-review` from the `mattpocock-skills` plugin (the output is long; filter it with `grep`). On a pass, write the `orca --version` line into `.installed-version`.
+- `orca --version` runs. If its output equals the content of the stamp, the install part passes; go to the session part.
+- Different, or no stamp yet: `orca skills installed` lists `orca-cli`, `orchestration`, and `tdd`, `diagnosing-bugs`, `code-review` from the `mattpocock-skills` plugin (the output is long; filter it with `grep`). On a pass, write the `orca --version` line into the stamp (create `~/.cache/matt-with-orca/` if missing).
 
 Session:
 
@@ -78,9 +80,9 @@ Session:
 - This session runs in an Orca-managed terminal, because a Run binds to the coordinator's terminal: `orca worktree current --json` returns the repo's worktree. Keep `result.worktree.repoId` for the repo selector.
 - Guides: `orca skills get orchestration` and `orca skills get orca-cli`; read both. Flags and subcommands change between Orca releases, so the commands in this skill are a frame; the exact flags come from those two guides and `--help`.
 
-If any item fails, delete `.installed-version`, install per [`SETUP.md`](SETUP.md), then check that item again.
+If any item fails, delete the stamp, install per [`SETUP.md`](SETUP.md), then check that item again.
 
-The worker agent id (`claude`, `codex`, ...) comes from the `orca-cli` guide; pass `--model` only when the user names one.
+The worker agent id (`claude`, `codex`, ...) comes from the `orca-cli` guide; pass `--model` only when the user names one. When one is passed, the receipt's `launch.effective` is the model the worker really runs: write that into the log row, and tell the user if it differs from `launch.requested`.
 
 Identify the tracker from `docs/agents/issue-tracker.md`. Identify the integration branch with `git branch --show-current`, never from the directory name. The repo selector is `id:<repoId>`, with `repoId` taken from `orca worktree current --json` above.
 
@@ -110,6 +112,8 @@ Present the graph, the upcoming wave, and the lost-width list to the user, and w
 ## 3. Write the wave's common rules
 
 Pin the base commit: `git rev-parse <integration branch>`. Write `wave<N>-common-rules.md` next to the ticket folder, following [`COMMON-RULES-TEMPLATE.md`](COMMON-RULES-TEMPLATE.md); its first section is the graph from step 2, with each ticket's wave and status, so the dependency tree lives on disk.
+
+Once the first worker is spawned, the rules part of the file is **frozen**: workers read it at any moment, so an edit mid-wave reaches some of them and not others. A rule that must change mid-wave goes to each running worker with `send --to dispatch:<id>` (step 5) and into the next wave's rules; only the log sections below the rules keep growing.
 
 The common rules are the single place holding what every worker in the wave needs to know, so each worker's own spec carries only three things: which ticket, which private resources, and which flow (step 4). The file is also the wave's log: steps 4 and 7 append to it, so step 0 of a later session can read where an unfinished wave stands.
 
@@ -147,7 +151,7 @@ Symptom tickets go through `diagnosing-bugs` because that skill forces the worke
 
 Chaining another Matt Pocock skill means adding a row to this table, not a prose branch. Point only at **model-invocable** skills: `tdd`, `code-review`, `diagnosing-bugs`, `prototype`, `research`, `domain-modeling`, `codebase-design`, `resolving-merge-conflicts`, `wizard`. The rest (`implement`, `to-spec`, `to-tickets`, `grill-with-docs`, `triage`, `wayfinder`) carry the `disable-model-invocation` flag; only a human can type them, so a worker cannot run them.
 
-If the wave's first worker reports it cannot find a skill, the plugin has not reached the worktree: paste the method straight into the specs of the remaining workers, record it in the traps section of the common rules, and delete `.installed-version` so the next run checks the install part again.
+If the wave's first worker reports it cannot find a skill, the plugin has not reached the worktree: paste the method straight into the specs of the remaining workers, record it in the traps section of the common rules, and delete the stamp so the next run checks the install part again.
 
 **Done when**: every ticket in the wave has exactly one `ready` dispatch and one row in the table.
 
@@ -165,7 +169,7 @@ Run it in the background, and keep `--timeout-ms` below the shell's per-command 
 
 **Liveness of the agent** comes from `worker-list --run <run id> --json`, the row's `projection.liveness`. `worker-show`'s `observation.status` is the terminal's liveness only: a `live` terminal can hold a dead or stuck agent.
 
-Process every message in the batch before passing `--ack <delivery id>` on the next `check`: answer `question` and `escalation` with `orca orchestration reply --id <message id> --body "<answer>"`; ask the user first when the answer is theirs to give. A `heartbeat` only proves liveness: ack it, nothing else. A timeout or an empty result is a checkpoint, not a failure. After three empty waits in a row, run `worker-list --run <run id> --json` and follow each row's `projection.nextAction`.
+Process every message in the batch before passing `--ack <delivery id>` on the next `check`: answer `question` and `escalation` with `orca orchestration reply --id <message id> --body "<answer>"`; ask the user first when the answer is theirs to give. A `heartbeat` only proves liveness: ack it, nothing else. A timeout or an empty result is a checkpoint, not a failure. After three empty waits in a row, run `worker-list --run <run id> --json` and act on each row's `projection.attention.requiresAction` and literal `projection.nextAction` argv; a `none` action has no argv, so read `liveness.reason` and keep waiting. Rows page at 100: while `page.hasMore`, follow `page.nextCursor` with `--cursor`.
 
 For each `worker_done`, match the dispatch id against the log, then check the real artifacts, not the report's words:
 
@@ -203,7 +207,7 @@ Each ticket was already reviewed by its worker in step 4. This pass targets only
 - A one-ticket wave has no seam: write `## Review` as "not applicable: one-ticket wave, reviewed by its worker", then go to step 8.
 - A wave of two or more tickets: run `mattpocock-skills:code-review` with the wave's first base commit (step 3) as the fixed point, so tickets started by rolling start are covered too, stating in the call that each ticket was already reviewed on its own and only seam findings should be reported. Present the Standards and Spec axes separately.
 
-Fix each finding. A finding contained in one ticket's zone goes to a new worker in that ticket's own worktree: `bash <skill dir>/scripts/spawn-worker.sh --worktree <worktree id> --launch "<agent launch command>" --title <title> --spec-file <spec file>`, in the background. The launch command is the one Orca's launcher ran, the line after the shell prompt at the top of the ticket's first terminal (e.g. `claude --dangerously-skip-permissions`). An agent started this way is not tracked by Orca's launcher, so the receipt reads `turnStart: unsupported`: confirm with `terminal read --screen` that the agent is running a turn and no `draft` remains. Then wait, check and merge again as in steps 5–6. The previous worker was released in step 5 (step 5 reuses it only for follow-up known at that point), so the new one starts with a blank context: its spec holds the path to the common rules, the ticket, the ticket's comments (the previous worker's report), the files the previous worker touched, and the finding. A finding cutting across several tickets you fix yourself on the integration branch. Gather every question that needs a human decision into one round, present it, then record the decisions in the comments of the tickets involved, so the next wave can read them.
+Fix each finding. Before any new work in an existing worktree, fast-forward its branch to the integration branch (`git -C <worktree> merge --ff-only <integration branch>`), so the worker reads the latest ticket comments and its merge comes back without conflicts. The coordinator writes into a ticket file only while no worker holds that ticket; decisions for a held ticket go to its worker with `send --to dispatch:<id>`. A finding contained in one ticket's zone goes to a new worker in that ticket's own worktree: `bash <skill dir>/scripts/spawn-worker.sh --worktree <worktree id> --launch "<agent launch command>" --title <title> --spec-file <spec file>`, in the background. The launch command is the one Orca's launcher ran, the line after the shell prompt at the top of the ticket's first terminal (e.g. `claude --dangerously-skip-permissions`). An agent started this way is not tracked by Orca's launcher, so the receipt reads `turnStart: unsupported`: confirm with `terminal read --screen` that the agent is running a turn and no `draft` remains. Then wait, check and merge again as in steps 5–6. The previous worker was released in step 5 (step 5 reuses it only for follow-up known at that point), so the new one starts with a blank context: its spec holds the path to the common rules, the ticket, the ticket's comments (the previous worker's report), the files the previous worker touched, and the finding. A finding cutting across several tickets goes to one worker on a fresh worktree from the integration branch; the coordinator edits files itself only when the user assigns that fix to it in the decision round, and says so in `## Review`. Gather every question that needs a human decision into one round, present it, then record the decisions in the comments of the tickets involved, so the next wave can read them.
 
 Append a `## Review` section to the end of the common rules file: the fixed point, the number of findings per axis, and the outcome of each finding.
 

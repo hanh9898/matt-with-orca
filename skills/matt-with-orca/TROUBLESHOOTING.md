@@ -8,6 +8,17 @@ Only positive evidence authorizes stopping, abandoning or retrying a worker: liv
 
 **`worker-start` exits non-zero.** The receipt is the only recovery source: read its `state`, `stage`, `failedStage`, `residualResources` and recovery commands, and run exactly those. Re-running the original command creates a second worktree and a second Task. A worker that failed before `ready` still owns the terminal it created: release it with `worker-release`, never by closing the terminal by hand.
 
+**`worker-start` refuses before it starts** (an `error.code`, no Task created unless noted). Read `error.data.nextSteps` when present; older hosts may omit `data`.
+
+| Code | Meaning | Handle |
+|---|---|---|
+| `agent_unconfigured` | The terminal's agent was not recognized yet (it had not finished drawing) | The spawn script repeats the call; no Task was created |
+| `task_not_found` | No such Task in the bound Run | Check `task-list --json` and the bound Run (`consumer_fenced` below) |
+| `task_not_startable` | Task not `ready`, or `--retry-of` names a Dispatch that did not fail or stop | Wait for it to settle, or retry only a proven failed or stopped Dispatch |
+| `inject_rejected` | No recognized agent runs in that terminal | Warm a recognized agent there, or use another terminal |
+| `runtime_error` | Anything else, including a terminal that already owns an active Dispatch | Read the message and inspect; never repeat the call unchanged |
+| `invalid_argument` | A flag is malformed, e.g. a `--retry-request` that is not a UUID | Fix the argument |
+
 **`worker-start` returns `state: outcome_unknown`, `stage: turn_start_unobserved`.** Orca typed the preamble and spec into the agent but saw no first turn start within 30 seconds. Orca's own rule for `outcome_unknown` is to inspect, then choose `worker-stop` or `worker-abandon`; this entry adds one path of its own (form B), used only on the positive evidence it names. The terminal handle is in the `RESULT` line (or the receipt's `effects`, `kind: terminal`, `role: agent`). First, `worker-list --run <run id> --json`: that row's `projection.liveness.verdict` must be `live`; anything else, follow `projection.nextAction`. Then read the screen, `orca terminal read --terminal <handle> --screen --json`, and match one form:
 
 - **A. The spec is stuck**: the `draft` field holds the preamble and `=== TASK ===`. Cause, as diagnosed: the agent was still booting, so the text landed and the Enter was lost. Mostly a cold spawn, which the warm spawn of step 4 prevents. Submit exactly that draft through Orca's submit observer: `orca terminal send --terminal <handle> --enter --wait-submit 30 --json`. It never resends; on timeout it returns the input-accepted receipt. Then continue as in form B.
@@ -61,6 +72,10 @@ After three consecutive failures of one Task, Orca marks that Task `failed`: sto
 **Terminal retained as `user_takeover`** (see `outcome_unknown` above). The dispatch has settled, but release left the terminal alive, so the first cleanup check fails on "terminal released". Once the other two checks pass, close that exact terminal with `orca terminal close --terminal <handle>`, confirm with `orca terminal list --worktree id:<worktree id> --json`, then continue with `orca worktree rm`.
 
 **Release reports `release_pending` or `release_unknown`.** Run exactly the recovery command in the receipt; closing the terminal by hand does not replace a release.
+
+## Experiments
+
+**Diagnostic runs leave Tasks behind** (a spawn test, a reproduction loop). Run experiments from an Orca terminal other than the coordinator's, and clean up after each: `worker-release` every settled test Dispatch, `worker-abandon --dispatch <id>` every one left `blocked` or unknown, `orca worktree rm` its worktrees, and name the test Run in the wave log. `orchestration reset` wipes every Run's state: never use it to tidy up.
 
 ## Environment
 

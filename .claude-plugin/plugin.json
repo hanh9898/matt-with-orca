@@ -1,6 +1,6 @@
 {
   "name": "matt-with-orca",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "A simple multi-agent orchestrator: Matt Pocock's skills + Orca orchestration, running tickets in waves of supervised parallel workers.",
   "author": {
     "name": "hanh9898",

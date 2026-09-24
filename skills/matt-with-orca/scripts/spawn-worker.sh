@@ -11,7 +11,8 @@
 #     (--title <task title> --spec-file <path> | --task <task id> --retry-of <dispatch id>)
 #
 # Options: --warm <text> (default "bypass permissions": Claude Code as Orca launches it),
-#          --warm-timeout <seconds> (default 120); env ORCA_TIMEOUT bounds each orca call (180 s).
+#          --warm-timeout <seconds> (default 120); env ORCA_TIMEOUT bounds each orca call (180 s),
+#          env ORCA_BIN or ORCA_CLI_COMMAND picks the executable (default orca).
 # Output: progress lines, then one line starting with RESULT, with worktree, handle, task,
 # request id, dispatch, state, stage and error. The full receipt is saved next to the spec file, or in
 # the temp directory.
@@ -43,7 +44,9 @@ done
 field() { grep -o "\"$1\": *\"[^\"]*\"" | head -1 | sed 's/.*: *"\(.*\)"/\1/'; }
 # Every orca call is bounded: under load a call can hang without returning.
 ORCA_TIMEOUT=${ORCA_TIMEOUT:-180}
-o() { timeout "$ORCA_TIMEOUT" orca "$@"; }
+# The same executable the coordinator resolved (step 1); ORCA_CLI_COMMAND may carry arguments.
+ORCA_BIN=${ORCA_BIN:-${ORCA_CLI_COMMAND:-orca}}
+o() { timeout "$ORCA_TIMEOUT" $ORCA_BIN "$@"; }
 uuid4() { printf '%04x%04x-%04x-4%03x-%04x-%04x%04x%04x' $RANDOM $RANDOM $RANDOM $((RANDOM & 0xfff)) $(((RANDOM & 0x3fff) | 0x8000)) $RANDOM $RANDOM $RANDOM; }
 
 OUT_DIR=$(dirname "${SPEC_FILE:-${TMPDIR:-/tmp}/x}")
