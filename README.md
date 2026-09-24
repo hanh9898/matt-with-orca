@@ -18,7 +18,7 @@ Orca can run many supervised workers in parallel, each in its own worktree, and 
 - It **splits** tickets into waves from their `Blocked by` lines, so only independent tickets run side by side.
 - It writes one **common rules** file per wave, so every worker gets the same context and each spec stays four lines long.
 - It **checks** each worker's work against the real artifacts (commits, ticket status, a re-run of the key claim) instead of trusting the report.
-- It **merges** in ticket order, reviews the **seams** between tickets, then **cleans up** worktrees only when that is safe.
+- It **merges** each ticket as soon as it checks out, **starts** the tickets that merge unblocks, reviews the **seams** between tickets, then **cleans up** worktrees only when that is safe.
 
 The wave file doubles as a log, so a new session can pick up a half-finished wave where the last one stopped.
 
@@ -44,11 +44,11 @@ Each run starts by locating the current stage from what is on disk:
 Each wave then goes through the same loop:
 
 1. **Prepare**: check the Orca toolchain (the install part is stamped per Orca version, the session part is checked every run), then read the ticket tracker and the integration branch.
-2. **Split**: draw the dependency graph and propose the next wave. You approve it.
+2. **Split**: draw the dependency graph and put every ticket that can run now into the wave. It also lists what is costing width (a ticket waiting on a human, a `Blocked by` that is only a shared file) with the one question that would unblock it. You approve it.
 3. **Common rules**: pin a base commit and write `wave<N>-common-rules.md` from the template.
 4. **Spawn**: one Orca Run per wave; per ticket, `scripts/spawn-worker.sh` creates the worktree with its agent, waits until the agent is warm, then hands it the spec with `worker-start --terminal`. One background job per ticket, the whole wave at once. Symptom tickets run `diagnosing-bugs` then `tdd`; behaviour tickets run `tdd`. Every flow ends with `code-review`, as Matt's `/implement` does.
 5. **Check**: wait on `worker_done`, then verify each report against commits, ticket status, the review result, and a re-run of its key claim.
-6. **Merge**: one `--no-ff` merge per ticket, in ticket order, with a cheap verification after each.
+6. **Merge**: one `--no-ff` merge per ticket as soon as its report is checked, with a cheap verification after each; any ticket that merge unblocks starts right away in the same wave (rolling start).
 7. **Review the seams**: for waves of two or more tickets, one `code-review` pass over where the tickets touch; findings go to a worker in the owning worktree or get fixed on the integration branch.
 8. **Clean up**: remove worktrees whose dispatch has settled, whose tree is clean, and whose branch is merged; then open the next wave.
 
@@ -141,6 +141,7 @@ Files in this repo:
 
 ## Design principles
 
+- **Width first.** Parallel work is the point: each wave takes every ticket that can run, the coordinator names what blocks the rest, and a ticket starts the moment its blockers merge.
 - **Every step ends on a checkable "done when".** The coordinator can tell finished from unfinished without judgement calls.
 - **Check artifacts, not reports.** A worker's "all green" only covers what it checked.
 - **Red before green.** A bug fix counts only if its test failed on the symptom before the fix.

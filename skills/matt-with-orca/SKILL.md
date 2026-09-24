@@ -30,7 +30,7 @@ Read the signals below on the real repo. Walk the table from the bottom row up; 
 | B. Idea not sharp | No spec for the feature; the feature's terms are not in `CONTEXT.md` | `/mattpocock-skills:grill-with-docs`. Work too large for one session with no visible path: `/mattpocock-skills:wayfinder`. A raw issue someone else filed: `/mattpocock-skills:triage` |
 | C. Grilled, no spec | `CONTEXT.md` or an ADR records the feature's decisions; no spec file yet | Ask the user whether `/mattpocock-skills:prototype` is needed, then `/mattpocock-skills:to-spec`; both run in the **same session** that did the grilling. See the stage C notes below the table |
 | D. Spec, no tickets | A spec exists (location per `issue-tracker.md`); the feature's `issues/` folder is empty or missing | `/mattpocock-skills:to-tickets <spec path>`, run in the same session that wrote the spec |
-| E. Tickets, no wave run yet | Tickets exist; no `wave*-common-rules.md` file | Small work (one or two sequential tickets): `/mattpocock-skills:implement` in this session. Otherwise: step 1 of this skill |
+| E. Tickets, no wave run yet | Tickets exist; no `wave*-common-rules.md` file | A single ticket, or a pure chain where no two tickets can ever run side by side: `/mattpocock-skills:implement` in this session. Any width at all: step 1 of this skill |
 | F. Wave in progress | A `wave<N>-common-rules.md` file exists, and a ticket of that wave (listed in the file's title) is not yet `resolved`/`ready-for-human`; or the file has `## Wave workers` but no `## Review`, or the "cleaned" column is not fully checked | Resume at the missing step, see right below the table |
 | G. No work left for agents | At least one ticket exists, and every ticket is `resolved` or `ready-for-human` | Summarize per step 8; list the work waiting on humans |
 
@@ -82,19 +82,26 @@ Identify the tracker from `docs/agents/issue-tracker.md`. Identify the integrati
 
 ## 2. Build the graph and split into waves
 
-Read every ticket: status, dependency line (`Blocked by`), comments. Draw the dependency graph on one line, for example `01 → {02, 03} → {04, 05, 06} → 09`.
+**Width** is the point of this skill: every wave takes every ticket that can run now, and the coordinator works to make that set wider. A ticket can run now when every ticket in its `Blocked by` is merged and its status is `ready-for-agent`.
+
+Read every ticket: status, dependency line (`Blocked by`), comments. Draw the dependency graph on one line, marking each ticket's status, for example `01✓ → {02, 03?} → {04, 05, 06} → 09`.
 
 Two tickets in the same wave must be logically independent. If they touch the same registration file (manifest, package index, route table, permission file) they can still share a wave, but the common rules must assign each ticket its own file zone.
 
+Then hunt for lost width, and list every case with the one thing that would recover it:
+
+- **A ticket waiting on a human** (`needs-triage`, `ready-for-human`) that would join this wave, or that blocks tickets which would: name the exact question the human must answer, or the decision they must make.
+- **A false edge**: a `Blocked by` that stands for a shared file rather than a logical dependency (the later ticket neither calls nor reads what the earlier one builds). Propose dropping the edge and giving both tickets a file zone; the edge changes only in the ticket, and only with the user's agreement.
+
 This skill holds the dependencies between waves; keep them out of Orca's `--deps`: an Orca Task `completed` does not mean its branch is merged.
 
-Present the graph and the upcoming wave to the user, and wait for approval.
+Present the graph, the upcoming wave, and the lost-width list to the user, and wait for approval. A wave of one ticket is a signal to resolve the lost-width list first when the user can.
 
-**Done when**: every open ticket has a wave number, and the user has approved the upcoming wave.
+**Done when**: every open ticket has a wave number, every case of lost width has been named to the user with its unblocking question, and the user has approved the upcoming wave.
 
 ## 3. Write the wave's common rules
 
-Pin the base commit: `git rev-parse <integration branch>`. Write `wave<N>-common-rules.md` next to the ticket folder, following [`COMMON-RULES-TEMPLATE.md`](COMMON-RULES-TEMPLATE.md).
+Pin the base commit: `git rev-parse <integration branch>`. Write `wave<N>-common-rules.md` next to the ticket folder, following [`COMMON-RULES-TEMPLATE.md`](COMMON-RULES-TEMPLATE.md); its first section is the graph from step 2, with each ticket's wave and status, so the dependency tree lives on disk.
 
 The common rules are the single place holding what every worker in the wave needs to know, so each worker's own spec carries only three things: which ticket, which private resources, and which flow (step 4). The file is also the wave's log: steps 4 and 7 append to it, so step 0 of a later session can read where an unfinished wave stands.
 
@@ -102,7 +109,7 @@ The common rules are the single place holding what every worker in the wave need
 
 ## 4. Spawn
 
-Create the wave's Run: `orca orchestration run-create --objective "Wave <N>: tickets <NN>, <NN>" --json`. Write the `## Wave workers` heading, a `Run: <run id>` line, and the table header row (ticket, task id, dispatch id, worktree id, branch, private resources, cleaned) at the end of the common rules file **before** spawning the first worker. Write each worker's row as soon as it is spawned, so any session reopened midway can read which workers exist.
+Create the wave's Run: `orca orchestration run-create --objective "Wave <N>: tickets <NN>, <NN>" --json`. Write the `## Wave workers` heading, a `Run: <run id>` line, and the table header row (ticket, task id, dispatch id, worktree id, branch, base commit, private resources, cleaned) at the end of the common rules file **before** spawning the first worker. Write each worker's row as soon as it is spawned, so any session reopened midway can read which workers exist.
 
 Spawn in two moves, so the agent is **warm** (its input box drawn and taking keys) before the spec reaches it. A single `worker-start --worktree new-top-level --agent` types the spec into an agent that is still booting: the text lands, the Enter is lost, and the receipt reads `outcome_unknown` / `turn_start_unobserved` (5 of 6 cold starts on Orca 1.4.210, none of 7 warm ones). [`scripts/spawn-worker.sh`](scripts/spawn-worker.sh) does both moves: `worktree create --agent`, a poll of the screen until the agent's input box is drawn (`terminal wait --for tui-idle` can fire before anything is drawn, so it is not the warm signal), then `worker-start --terminal`, repeated while Orca answers `agent_unconfigured` (no Task is created then). Write each ticket's spec to a file, then start one background job per ticket, the whole wave at once:
 
@@ -126,7 +133,7 @@ The **flow** is the chain of skills the worker runs for that ticket. Read the ti
 | Behaviour that should exist | `/mattpocock-skills:tdd` |
 | `Status: ready-for-human` | spawn no worker |
 
-Every flow ends the way Matt's `/implement` does: `/mattpocock-skills:code-review` with the wave's base commit as the fixed point, fix the findings (the refactor phase `tdd` hands to review lives here), then make the last commit and send `worker_done`. `code-review` opens fresh-context sub-agents for its two axes, so the reviewer stays independent of the worker. A finding that needs a human decision goes through `ask`.
+Every flow ends the way Matt's `/implement` does: `/mattpocock-skills:code-review` with the ticket's base commit (its row's) as the fixed point, fix the findings (the refactor phase `tdd` hands to review lives here), then make the last commit and send `worker_done`. `code-review` opens fresh-context sub-agents for its two axes, so the reviewer stays independent of the worker. A finding that needs a human decision goes through `ask`.
 
 Symptom tickets go through `diagnosing-bugs` because that skill forces the worker to build a **tight** pass/fail loop that goes **red** on exactly that symptom, so the fix is proven to hit the right place instead of merely making the symptom disappear.
 
@@ -166,18 +173,20 @@ Worker stopped midway or report incomplete: see [`TROUBLESHOOTING.md`](TROUBLESH
 
 ## 6. Merge into the integration branch
 
-One merge commit per ticket: `git merge --no-ff <ticket branch> -m "Merge ticket NN (<name>) into <integration branch>"`. Merge in ticket-number order. After each merge, run the cheapest verification the repo has (install, build, lint, test). With nested worktrees, verify only the files git tracks on the integration branch, because commands that scan the tree (test runners, `**` globs) also run the unmerged code of the worktrees still open.
+Merge each ticket as soon as its report passes step 5, while the rest of the wave keeps running: steps 5 and 6 interleave. One merge commit per ticket: `git merge --no-ff <ticket branch> -m "Merge ticket NN (<name>) into <integration branch>"`. After each merge, run the cheapest verification the repo has (install, build, lint, test). With nested worktrees, verify only the files git tracks on the integration branch, because commands that scan the tree (test runners, `**` globs) also run the unmerged code of the worktrees still open.
+
+**Rolling start.** After each green merge, re-read the graph: a ticket whose `Blocked by` is now fully merged and whose status is `ready-for-agent` joins the current wave at once, without waiting for the rest of it. Spawn it per step 4 into the current Run, with the integration branch's new head as its base commit, written in its row and named in its spec; append it to the wave file's title and graph. Its worker's `code-review` uses that base commit.
 
 Conflict, failure after a merge, or a test count after the merge that does not match the test files git tracks: see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md).
 
-**Done when**: every ticket in the wave is merged, and verification is green after the last merge.
+**Done when**: every ticket in the wave is merged, every ticket its merges unblocked has been started in the wave, and verification is green after the last merge.
 
 ## 7. Review where the tickets touch, fix, close
 
 Each ticket was already reviewed by its worker in step 4. This pass targets only what a per-ticket review cannot see: the **seams** between tickets once merged (registration files, shared interfaces, two tickets solving the same thing two ways).
 
 - A one-ticket wave has no seam: write `## Review` as "not applicable: one-ticket wave, reviewed by its worker", then go to step 8.
-- A wave of two or more tickets: run `mattpocock-skills:code-review` with the wave's base commit as the fixed point, stating in the call that each ticket was already reviewed on its own and only seam findings should be reported. Present the Standards and Spec axes separately.
+- A wave of two or more tickets: run `mattpocock-skills:code-review` with the wave's first base commit (step 3) as the fixed point, so tickets started by rolling start are covered too, stating in the call that each ticket was already reviewed on its own and only seam findings should be reported. Present the Standards and Spec axes separately.
 
 Fix each finding. A finding contained in one ticket's zone goes to a new worker in that ticket's own worktree: `bash <skill dir>/scripts/spawn-worker.sh --worktree <worktree id> --launch "<agent launch command>" --title <title> --spec-file <spec file>`, in the background. The launch command is the one Orca's launcher ran, the line after the shell prompt at the top of the ticket's first terminal (e.g. `claude --dangerously-skip-permissions`). An agent started this way is not tracked by Orca's launcher, so the receipt reads `turnStart: unsupported`: confirm with `terminal read --screen` that the agent is running a turn and no `draft` remains. Then wait, check and merge again as in steps 5–6. The previous worker was released in step 5, so the new one starts with a blank context: its spec holds the path to the common rules, the ticket, the ticket's comments (the previous worker's report), the files the previous worker touched, and the finding. A finding cutting across several tickets you fix yourself on the integration branch. Gather every question that needs a human decision into one round, present it, then record the decisions in the comments of the tickets involved, so the next wave can read them.
 

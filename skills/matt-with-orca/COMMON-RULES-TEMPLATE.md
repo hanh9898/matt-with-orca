@@ -9,8 +9,16 @@ Copy in only what a worker cannot look up: an unwritten convention, the reason b
 ```markdown
 # Common rules for wave <N> (tickets <NN>, <NN>)
 
+## Graph
+`<one-line graph from step 2, e.g. 01✓ → {02, 03?} → 04>`
+
+| Ticket | Status | Blocked by | Wave |
+|---|---|---|---|
+| <NN> | <status> | <NN, NN or -> | <N, or what blocks it> |
+
 ## Context
-- Your worktree branches off `<integration branch>` at `<base commit>`. That branch already contains tickets <...>.
+- Your worktree branches off `<integration branch>` at `<base commit>`, unless your spec names another base commit
+  (a ticket started mid-wave). That branch already contains tickets <...>.
   Run `git branch --show-current` before every commit.
 - Read before you start: <spec>, <glossary / CONTEXT.md>, <ADRs>, your ticket, and the comments
   of tickets <...> for decisions already made.
@@ -42,7 +50,7 @@ Copy in only what a worker cannot look up: an unwritten convention, the reason b
 
 ## Done means
 - Commit to your branch. The coordinator pushes and merges.
-- Before the last commit: run `/mattpocock-skills:code-review` with `<base commit>` as the fixed point, fix the
+- Before the last commit: run `/mattpocock-skills:code-review` with your base commit as the fixed point, fix the
   findings, and write the number of findings per axis and the outcome of each into the ticket's comments.
 - Change the ticket status: `resolved` if fully done, `ready-for-human` for the part a human must do.
   Write a full report in the ticket's comments: a design summary, files touched, how you verified with
