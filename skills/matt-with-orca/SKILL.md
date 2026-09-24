@@ -102,16 +102,19 @@ The common rules are the single place holding what every worker in the wave need
 
 Create the wave's Run: `orca orchestration run-create --objective "Wave <N>: tickets <NN>, <NN>" --json`. Write the `## Wave workers` heading, a `Run: <run id>` line, and the table header row (ticket, task id, dispatch id, worktree id, branch, private resources, cleaned) at the end of the common rules file **before** spawning the first worker. Write each worker's row as soon as it is spawned, so any session reopened midway can read which workers exist.
 
-For each ticket in the wave, start the whole wave before waiting:
+Spawn in two moves, so the agent is **warm** (its input box drawn and taking keys) before the spec reaches it. A single `worker-start --worktree new-top-level --agent` types the spec into an agent that is still booting: the text lands, the Enter is lost, and the receipt reads `outcome_unknown` / `turn_start_unobserved` (5 of 6 cold starts on Orca 1.4.210, none of 7 warm ones). For each ticket in the wave, start the whole wave before waiting:
 
 ```text
+orca worktree create --repo <repo selector> --name wave<N>-<NN>-<slug> \
+  --base-branch <integration branch> --no-parent --agent <agent> --json
+orca worktree set --worktree id:<worktree id> --display-name "[Wave N] <NN> <ticket name>" --json
 orca orchestration worker-start --spec "<spec>" --task-title "[Wave N] <NN> <ticket name>" \
-  --worktree new-top-level --repo <repo selector> --name wave<N>-<NN>-<slug> \
-  --base-branch <integration branch> --display-name "[Wave N] <NN> <ticket name>" \
-  --agent <agent> --json
+  --terminal <handle> --worktree id:<worktree id> --json
 ```
 
-Take the task id, dispatch id and full worktree id (`<repoId>::<path>`) from the receipt; the receipt carries all three even when the command exits non-zero, so write the log row right away. The command exits 0 only when the worker is `ready`. On a non-zero exit, act on the receipt's `state` and `stage` per [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md); `outcome_unknown` with `turn_start_unobserved` usually only needs the spec stuck in the agent's input box submitted. Get the branch name with `git -C <path> branch --show-current`, and check that `git -C <path> rev-parse HEAD` equals the base commit; if the integration branch stays still while you spawn, every worktree in the wave shares one base. Orca may place the worktree **nested** inside the integration branch's checkout (`<checkout>/<--name>`); when it does, add `wave*-*/` to that checkout's `.git/info/exclude`, so `git status` and `git add` there see only the integration branch's files.
+Between the two moves, wait until the agent is warm: poll `orca terminal read --terminal <handle> --screen` about once a second until the input box's status line is on screen (Claude Code as Orca launches it: the line contains `bypass permissions`). `terminal wait --for tui-idle` can report ready before the agent has drawn anything, so it is not the warm signal. The worktree id and `<handle>` come from `worktree create`'s `worktree.id` and `startupTerminal.handle`. If `worker-start` answers `agent_unconfigured`, the agent was not yet recognized and no Task was created: wait five seconds and run the same `worker-start` again.
+
+Take the task id and dispatch id from the `worker-start` receipt; the receipt carries both even when the command exits non-zero, so write the log row right away, with the handle in the private resources column. The command exits 0 only when the worker is `ready`. On a non-zero exit, act on the receipt's `state` and `stage` per [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md). Get the branch name with `git -C <path> branch --show-current`, and check that `git -C <path> rev-parse HEAD` equals the base commit; if the integration branch stays still while you spawn, every worktree in the wave shares one base. Orca may place the worktree **nested** inside the integration branch's checkout (`<checkout>/<--name>`); when it does, add `wave*-*/` to that checkout's `.git/info/exclude`, so `git status` and `git add` there see only the integration branch's files.
 
 `<spec>` holds exactly four things: the **absolute** path to the common rules in the integration branch's checkout (the file is the wave's live log and is not in the worktree), the path to the ticket, the private resources (database name, port, volume, temp directory; a distinct set per worker), and the **flow**. Orca injects the lifecycle preamble (task id, dispatch id, the `ask` command, `worker_done`) ahead of the spec; the spec does not repeat it.
 
@@ -155,7 +158,7 @@ For each `worker_done`, match the dispatch id against the log, then check the re
 - symptom tickets: the report shows the loop **red before** the fix and green after. Green alone does not tell you whether the fix hit the right place or only masked the symptom;
 - private resources are cleaned up, or kept for a stated reason.
 
-Once checked, run `orca orchestration worker-release --dispatch <dispatch id> --json` before the ack. Release only closes the worker's terminal and archives its output (readable again with `worker-read`); the worktree and branch stay for steps 6 and 7.
+Once checked, run `orca orchestration worker-release --dispatch <dispatch id> --json` before the ack. Release archives the worker's output (readable again with `worker-read`); the worktree and branch stay for steps 6 and 7. The terminal came from `worktree create`, not from `worker-start`, so release keeps it (`state: retained`, `reason: external_terminal`): close that exact terminal yourself with `orca terminal close --terminal <handle> --json`.
 
 Worker stopped midway or report incomplete: see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md).
 
@@ -176,7 +179,7 @@ Each ticket was already reviewed by its worker in step 4. This pass targets only
 - A one-ticket wave has no seam: write `## Review` as "not applicable: one-ticket wave, reviewed by its worker", then go to step 8.
 - A wave of two or more tickets: run `mattpocock-skills:code-review` with the wave's base commit as the fixed point, stating in the call that each ticket was already reviewed on its own and only seam findings should be reported. Present the Standards and Spec axes separately.
 
-Fix each finding. A finding contained in one ticket's zone goes to a new worker in that ticket's own worktree: `worker-start --spec "<spec>" --worktree id:<worktree id> --agent <agent>`, then wait, check and merge again as in steps 5–6. The previous worker was released in step 5, so the new one starts with a blank context: its spec holds the path to the common rules, the ticket, the ticket's comments (the previous worker's report), the files the previous worker touched, and the finding. A finding cutting across several tickets you fix yourself on the integration branch. Gather every question that needs a human decision into one round, present it, then record the decisions in the comments of the tickets involved, so the next wave can read them.
+Fix each finding. A finding contained in one ticket's zone goes to a new worker in that ticket's own worktree, spawned warm as in step 4 but with the agent started by `orca terminal create --worktree id:<worktree id> --command "<agent launch command>" --json` (the command Orca's launcher ran is the line after the shell prompt at the top of the ticket's first terminal, e.g. `claude --dangerously-skip-permissions`), then wait, check and merge again as in steps 5–6. The previous worker was released in step 5, so the new one starts with a blank context: its spec holds the path to the common rules, the ticket, the ticket's comments (the previous worker's report), the files the previous worker touched, and the finding. A finding cutting across several tickets you fix yourself on the integration branch. Gather every question that needs a human decision into one round, present it, then record the decisions in the comments of the tickets involved, so the next wave can read them.
 
 Append a `## Review` section to the end of the common rules file: the fixed point, the number of findings per axis, and the outcome of each finding.
 
@@ -186,7 +189,7 @@ Append a `## Review` section to the end of the common rules file: the fixed poin
 
 `orca worktree rm` deletes the worktree directory, so for each row in the `## Wave workers` table, check three things first:
 
-- `worker-show --dispatch <dispatch id>` shows the dispatch has settled and its terminal is released;
+- `worker-show --dispatch <dispatch id>` shows the dispatch has settled, and `orca terminal list --worktree id:<worktree id> --json` shows no agent terminal of that dispatch left open;
 - `git -C <worktree> status --porcelain` is empty;
 - the ticket's branch appears in `git branch --merged <integration branch>`.
 

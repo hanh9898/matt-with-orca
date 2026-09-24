@@ -46,7 +46,7 @@ Each wave then goes through the same loop:
 1. **Prepare**: check the Orca toolchain (the install part is stamped per Orca version, the session part is checked every run), then read the ticket tracker and the integration branch.
 2. **Split**: draw the dependency graph and propose the next wave. You approve it.
 3. **Common rules**: pin a base commit and write `wave<N>-common-rules.md` from the template.
-4. **Spawn**: one Orca Run per wave, one `worker-start` per ticket. Symptom tickets run `diagnosing-bugs` then `tdd`; behaviour tickets run `tdd`. Every flow ends with `code-review`, as Matt's `/implement` does.
+4. **Spawn**: one Orca Run per wave; per ticket, create the worktree with its agent, wait until the agent is warm, then hand it the spec with `worker-start --terminal`. Symptom tickets run `diagnosing-bugs` then `tdd`; behaviour tickets run `tdd`. Every flow ends with `code-review`, as Matt's `/implement` does.
 5. **Check**: wait on `worker_done`, then verify each report against commits, ticket status, the review result, and a re-run of its key claim.
 6. **Merge**: one `--no-ff` merge per ticket, in ticket order, with a cheap verification after each.
 7. **Review the seams**: for waves of two or more tickets, one `code-review` pass over where the tickets touch; findings go to a worker in the owning worktree or get fixed on the integration branch.
@@ -150,7 +150,8 @@ Files in this repo:
 ## Limitations
 
 - Tested with Claude Code as coordinator and worker, on Windows 11 with Orca 1.4.210, on one sandbox project. Other agents Orca can launch (`codex`, ...) should work if they can load Matt Pocock's skills, but have not been tried.
-- Two incidents from that testing are handled in `TROUBLESHOOTING.md` rather than prevented: `worker-start` can return `outcome_unknown` with the spec stuck unsubmitted in the agent's input box, and Orca can place worktrees inside the main checkout, where tree-scanning test runners pick up unmerged code.
+- A one-shot `worker-start --worktree new-top-level --agent` types the spec into an agent that is still booting, and the Enter is lost (`outcome_unknown`, spec stuck in the input box; 5 of 6 cold starts in testing). Step 4 therefore spawns in two moves and waits for the agent's input box first; the warm-signal it waits for (`bypass permissions` on screen) is specific to Claude Code as Orca launches it.
+- Orca can place worktrees inside the main checkout, where tree-scanning test runners pick up unmerged code; step 6 verifies on git-tracked files only.
 - Workers can only run model-invocable skills. `implement`, `to-spec`, `to-tickets`, `grill-with-docs`, `triage`, and `wayfinder` are user-only, so the coordinator suggests them and you type them.
 - The ticket tracker is whatever `setup-matt-pocock-skills` configured; the skill reads it but does not create one.
 
