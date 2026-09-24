@@ -1,0 +1,13 @@
+{
+  "name": "matt-with-orca",
+  "version": "0.1.0",
+  "description": "A simple multi-agent orchestrator: Matt Pocock's skills + Orca orchestration, running tickets in waves of supervised parallel workers.",
+  "author": {
+    "name": "hanh9898",
+    "url": "https://github.com/hanh9898"
+  },
+  "homepage": "https://github.com/hanh9898/matt-with-orca",
+  "repository": "https://github.com/hanh9898/matt-with-orca",
+  "license": "MIT",
+  "keywords": ["multi-agent", "orchestration", "orca", "skills", "worktree", "tdd"]
+}
